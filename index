@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Physics Roller Coaster Simulation</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 15px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f0f4f8;
+      color: #333;
+      touch-action: manipulation;
+    }
+    h2 { text-align: center; margin-top: 0; margin-bottom: 10px; }
+    #container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 15px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 350px;
+      background: linear-gradient(to bottom, #87ceeb 0%, #e0f6ff 70%, #7ec850 70%, #529b2b 100%);
+      border-radius: 8px;
+      border: 2px solid #ccc;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      margin-top: 15px;
+      justify-content: space-around;
+      align-items: center;
+      background: #f8fafc;
+      padding: 12px;
+      border-radius: 8px;
+    }
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+    button {
+      padding: 10px 18px;
+      font-size: 16px;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      background-color: #2563eb;
+      color: white;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+    }
+    button:active { transform: scale(0.97); }
+    button.reset { background-color: #dc2626; }
+    label { font-weight: 600; font-size: 14px; }
+    .data-panel {
+      display: flex;
+      justify-content: space-around;
+      margin-top: 15px;
+      padding: 10px;
+      background: #e2e8f0;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .instructions {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #64748b;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div id="container">
+  <h2>🎢 Interactive Roller Coaster Simulation</h2>
+  
+  <canvas id="simCanvas" width="800" height="350"></canvas>
+
+  <div class="data-panel">
+    <div>Height: <span id="valHeight">0</span> m</div>
+    <div>Speed: <span id="valSpeed">0</span> m/s</div>
+    <div>PE: <span id="valPE">0</span> J</div>
+    <div>KE: <span id="valKE">0</span> J</div>
+    <div>Thermal: <span id="valThermal">0</span> J</div>
+  </div>
+
+  <div class="controls">
+    <button id="btnPlay">Start Coaster</button>
+    <button id="btnReset" class="reset">Reset Cart</button>
+
+    <div class="control-group">
+      <label for="friction">Friction (Heat Loss)</label>
+      <input type="range" id="friction" min="0" max="0.05" step="0.005" value="0.01">
+    </div>
+
+    <div class="control-group">
+      <label for="mass">Cart Mass (kg)</label>
+      <input type="range" id="mass" min="10" max="100" step="10" value="50">
+    </div>
+  </div>
+
+  <div class="instructions">
+    💡 <b>iPad / Touch Instructions:</b> Drag the 3 track nodes (white dots) up or down to change hill heights!
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('simCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // Simulation physics parameters
+  const g = 9.8;
+  let mass = 50;
+  let frictionCoeff = 0.01;
+  let isRunning = false;
+
+  // Interactive Track Control Points (X fixed, Y draggable)
+  let trackNodes = [
+    { x: 50, y: 80 },   // Initial Drop Hill
+    { x: 300, y: 220 },  // Valley
+    { x: 550, y: 140 },  // Second Hill
+    { x: 750, y: 280 }   // Finish Line
+  ];
+
+  // Cart state
+  let cart = {
+    s: 0,           // Distance along path (0 to 1)
+    v: 0,           // Velocity
+    pe: 0,
+    ke: 0,
+    thermal: 0,
+    x: trackNodes[0].x,
+    y: trackNodes[0].y
+  };
+
+  let draggingNode = null;
+
+  // Track shape generator using Bezier curve interpolation
+  function getTrackPoint(t) {
+    const p0 = trackNodes[0], p1 = trackNodes[1], p2 = trackNodes[2], p3 = trackNodes[3];
+    const cx = 3 * (p1.x - p0.x), cy = 3 * (p1.y - p0.y);
+    const bx = 3 * (p2.x - p1.x) - cx, by = 3 * (p2.y - p1.y) - cy;
+    const ax = p3.x - p0.x - cx - bx, ay = p3.y - p0.y - cy - by;
+
+    const x = ax * Math.pow(t, 3) + bx * Math.pow(t, 2) + cx * t + p0.x;
+    const y = ay * Math.pow(t, 3) + by * Math.pow(t, 2) + cy * t + p0.y;
+    return { x, y };
+  }
+
+  function resetCart() {
+    isRunning = false;
+    document.getElementById('btnPlay').textContent = "Start Coaster";
+    cart.s = 0;
+    cart.v = 0;
+    cart.thermal = 0;
+    const startPt = getTrackPoint(0);
+    cart.x = startPt.x;
+    cart.y = startPt.y;
+    updatePhysics();
+  }
+
+  function updatePhysics() {
+    mass = parseFloat(document.getElementById('mass').value);
+    frictionCoeff = parseFloat(document.getElementById('friction').value);
+
+    const groundLevel = canvas.height - 50;
+    const heightInMeters = Math.max(0, (groundLevel - cart.y) / 10); // 10 px = 1 meter
+
+    if (isRunning) {
+      // Calculate current track slope
+      const ptCurrent = getTrackPoint(cart.s);
+      const ptNext = getTrackPoint(Math.min(1, cart.s + 0.001));
+      const dy = ptNext.y - ptCurrent.y;
+      const dx = ptNext.x - ptCurrent.x;
+      const angle = Math.atan2(dy, dx);
+
+      // Forces: Gravity component along track + Friction
+      const accelG = g * Math.sin(angle);
+      const accelF = frictionCoeff * g * Math.cos(angle);
+
+      cart.v += (accelG - Math.sign(cart.v) * accelF) * 0.08;
+
+      // Thermal energy accumulation
+      if (Math.abs(cart.v) > 0.01) {
+        cart.thermal += Math.abs(accelF) * mass * 0.1;
+      }
+
+      // Advance cart position
+      cart.s += (cart.v * 0.0008);
+
+      // Boundaries
+      if (cart.s >= 1) { cart.s = 1; cart.v = 0; isRunning = false; }
+      if (cart.s <= 0) { cart.s = 0; cart.v = Math.max(0, cart.v); }
+
+      const newPt = getTrackPoint(cart.s);
+      cart.x = newPt.x;
+      cart.y = newPt.y;
+    }
+
+    // Energy Calculations
+    cart.pe = mass * g * heightInMeters;
+    cart.ke = 0.5 * mass * Math.pow(cart.v, 2);
+
+    // Update UI Indicators
+    document.getElementById('valHeight').textContent = heightInMeters.toFixed(1);
+    document.getElementById('valSpeed').textContent = Math.abs(cart.v).toFixed(1);
+    document.getElementById('valPE').textContent = Math.round(cart.pe);
+    document.getElementById('valKE').textContent = Math.round(cart.ke);
+    document.getElementById('valThermal').textContent = Math.round(cart.thermal);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw Track Line
+    ctx.beginPath();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "#475569";
+    for (let t = 0; t <= 1; t += 0.01) {
+      const pt = getTrackPoint(t);
+      if (t === 0) ctx.moveTo(pt.x, pt.y);
+      else ctx.lineTo(pt.x, pt.y);
+    }
+    ctx.stroke();
+
+    // Draw Track Support Pillars
+    trackNodes.forEach(node => {
+      ctx.beginPath();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(100, 116, 139, 0.4)";
+      ctx.moveTo(node.x, node.y);
+      ctx.lineTo(node.x, canvas.height - 35);
+      ctx.stroke();
+
+      // Draggable Handles
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.strokeStyle = "#2563eb";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    });
+
+    // Draw Cart
+    ctx.save();
+    ctx.translate(cart.x, cart.y);
+    ctx.fillStyle = "#ea580c";
+    ctx.fillRect(-12, -14, 24, 12); // Cart body
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.arc(-7, -2, 4, 0, Math.PI * 2); // Wheels
+    ctx.arc(7, -2, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Velocity Vector Arrow (Vector direction & magnitude)
+    if (Math.abs(cart.v) > 0.1) {
+      ctx.beginPath();
+      ctx.moveTo(0, -14);
+      ctx.lineTo(cart.v * 3, -14);
+      ctx.strokeStyle = "#16a34a";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Real-time Energy Bar Graph Overlay
+    const barX = 20, barY = 20, barWidth = 15, maxHeight = 80;
+    const totalMax = 5000; // Normalization constant for energy visualizer
+
+    // PE Bar (Blue)
+    ctx.fillStyle = "#2563eb";
+    const peH = Math.min(maxHeight, (cart.pe / totalMax) * maxHeight);
+    ctx.fillRect(barX, barY + (maxHeight - peH), barWidth, peH);
+
+    // KE Bar (Green)
+    ctx.fillStyle = "#16a34a";
+    const keH = Math.min(maxHeight, (cart.ke / totalMax) * maxHeight);
+    ctx.fillRect(barX + 25, barY + (maxHeight - keH), barWidth, keH);
+
+    // Thermal Bar (Red)
+    ctx.fillStyle = "#dc2626";
+    const thH = Math.min(maxHeight, (cart.thermal / totalMax) * maxHeight);
+    ctx.fillRect(barX + 50, barY + (maxHeight - thH), barWidth, thH);
+
+    // Bar Labels
+    ctx.fillStyle = "#000";
+    ctx.font = "10px sans-serif";
+    ctx.fillText("PE", barX, barY + maxHeight + 12);
+    ctx.fillText("KE", barX + 25, barY + maxHeight + 12);
+    ctx.fillText("Heat", barX + 48, barY + maxHeight + 12);
+  }
+
+  function loop() {
+    updatePhysics();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // --- Touch & Mouse Interactivity for Draggable Track Nodes ---
+  function handleStart(e) {
+    if (isRunning) return;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const touchX = (clientX - rect.left) * (canvas.width / rect.width);
+    const touchY = (clientY - rect.top) * (canvas.height / rect.height);
+
+    trackNodes.forEach(node => {
+      const dist = Math.hypot(node.x - touchX, node.y - touchY);
+      if (dist < 25) draggingNode = node; // Touch threshold
+    });
+  }
+
+  function handleMove(e) {
+    if (draggingNode) {
+      const rect = canvas.getBoundingClientRect();
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const touchY = (clientY - rect.top) * (canvas.height / rect.height);
+      draggingNode.y = Math.max(30, Math.min(canvas.height - 50, touchY));
+      resetCart();
+      e.preventDefault();
+    }
+  }
+
+  function handleEnd() { draggingNode = null; }
+
+  canvas.addEventListener('mousedown', handleStart);
+  canvas.addEventListener('mousemove', handleMove);
+  window.addEventListener('mouseup', handleEnd);
+
+  canvas.addEventListener('touchstart', handleStart, { passive: false });
+  canvas.addEventListener('touchmove', handleMove, { passive: false });
+  window.addEventListener('touchend', handleEnd);
+
+  // Button Controls
+  document.getElementById('btnPlay').addEventListener('click', () => {
+    isRunning = !isRunning;
+    document.getElementById('btnPlay').textContent = isRunning ? "Pause" : "Resume";
+  });
+
+  document.getElementById('btnReset').addEventListener('click', resetCart);
+
+  // Launch Loop
+  resetCart();
+  loop();
+</script>
+</body>
+</html>
